@@ -1,0 +1,91 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GNSS Interference Map</title>
+<link href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/h3-js@4"></script>
+<script src="https://unpkg.com/deck.gl@9/dist.min.js"></script>
+<style>
+  body { margin: 0; font-family: system-ui, sans-serif; }
+  #map { position: absolute; inset: 0; }
+  #panel { position: absolute; top: 16px; left: 16px; background: rgba(20,20,28,.92);
+           color: #eee; padding: 14px 16px; border-radius: 8px; font-size: 13px; width: 270px; }
+  #panel h1 { font-size: 16px; margin: 0 0 4px; }
+  .tabs { display: flex; gap: 6px; margin: 10px 0; }
+  .tabs button { flex: 1; padding: 6px; border: 1px solid #555; background: #2a2a35;
+                 color: #ddd; border-radius: 5px; cursor: pointer; font-size: 12px; }
+  .tabs button.on { background: #4a6cf7; border-color: #4a6cf7; color: #fff; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+  .sw { width: 14px; height: 14px; border-radius: 3px; }
+  #desc, #panel small { color: #aaa; display: block; margin-top: 8px; line-height: 1.4; }
+  a { color: #8cf; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="panel">
+  <h1>GNSS Interference Map</h1>
+  <div id="date"></div>
+  <div class="tabs">
+    <button id="b-aff" class="on">Affected aircraft</button>
+    <button id="b-ons">Where GPS is lost</button>
+  </div>
+  <div id="legend"></div>
+  <div id="desc"></div>
+  <small>Data: <a href="https://adsb.lol">adsb.lol</a> (ODbL). Open-data analysis, not an official product.</small>
+</div>
+<script>
+const DAY = "2026-11-01";
+document.getElementById("date").textContent = DAY;
+
+const MODES = {
+  aff: {
+    legend: [["#2ecc71","Low (< 2%)"],["#f1c40f","Medium (2 to 10%)"],["#e74c3c","High (> 10%)"]],
+    desc: "Share of aircraft reporting degraded GPS accuracy (NIC < 7). Includes aircraft still recovering after leaving a jammed area.",
+    filter: d => true,
+    color: d => d.pct_bad > 10 ? [231,76,60,190] : d.pct_bad >= 2 ? [241,196,15,160] : [46,204,113,60],
+    tip: d => `${d.pct_bad}% degraded\n${d.n_bad} of ${d.n_aircraft} aircraft`
+  },
+  ons: {
+    legend: [["#f1c40f","1 to 3% of aircraft"],["#e67e22","3 to 10%"],["#e74c3c","> 10%"]],
+    desc: "Where aircraft GPS goes from good to degraded. Removes recovery trails, so it points closer to the actual interference zones. Cells with at least 3 events.",
+    filter: d => d.n_onset >= 3 && d.onset_rate >= 1,
+    color: d => d.onset_rate > 10 ? [231,76,60,210] : d.onset_rate >= 3 ? [230,126,34,190] : [241,196,15,150],
+    tip: d => `${d.n_onset} aircraft lost GPS here\n${d.onset_rate}% of ${d.n_aircraft} passing aircraft`
+  }
+};
+
+const map = new maplibregl.Map({
+  container: "map",
+  style: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+  center: [25, 50], zoom: 3.5
+});
+const overlay = new deck.MapboxOverlay({
+  getTooltip: ({object}) => object && MODES[current].tip(object)
+});
+map.addControl(overlay);
+
+let data = [], current = "aff";
+function render() {
+  const m = MODES[current];
+  overlay.setProps({ layers: [new deck.H3HexagonLayer({
+    id: "hex-" + current, data: data.filter(m.filter),
+    getHexagon: d => d.cell, getFillColor: m.color,
+    extruded: false, stroked: false, pickable: true
+  })]});
+  document.getElementById("legend").innerHTML = m.legend.map(([c, t]) =>
+    `<div class="row"><span class="sw" style="background:${c}"></span>${t}</div>`).join("");
+  document.getElementById("desc").textContent = m.desc;
+  document.getElementById("b-aff").classList.toggle("on", current === "aff");
+  document.getElementById("b-ons").classList.toggle("on", current === "ons");
+}
+document.getElementById("b-aff").onclick = () => { current = "aff"; render(); };
+document.getElementById("b-ons").onclick = () => { current = "ons"; render(); };
+
+fetch(`../data/${DAY}.json`).then(r => r.json()).then(d => { data = d; render(); });
+</script>
+</body>
+</html>
